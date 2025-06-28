@@ -5,7 +5,12 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: "*", // 배포 시엔 보안을 위해 특정 도메인으로 제한하는 게 좋습니다
+    methods: ["GET", "POST"],
+  },
+});
 
 const failedMap = {};
 const completedMap = {};
