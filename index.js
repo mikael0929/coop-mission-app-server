@@ -17,12 +17,13 @@ const completedMap = {};
 const activeMissionMap = {};
 const failureTriggers = {}; // ✅ 추가
 
-const buildPath = path.join(__dirname, "../client/build");
-app.use(express.static(buildPath));
+// ❌ 클라이언트 정적 파일 서비스 제거
+//const buildPath = path.join(__dirname, "../client/build");
+//app.use(express.static(buildPath));
 
-app.get(/.*/, (req, res) => {
-  res.sendFile(path.join(buildPath, "index.html"));
-});
+//app.get(/.*/, (req, res) => {
+//  res.sendFile(path.join(buildPath, "index.html"));
+//});
 
 io.on("connection", (socket) => {
   console.log("✅ 연결됨:", socket.id);
