@@ -7,125 +7,97 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // 배포 시엔 보안을 위해 특정 도메인으로 제한하는 게 좋습니다
+    origin: "*",
     methods: ["GET", "POST"],
   },
 });
 
-const failedMap = {};
-const completedMap = {};
-const activeMissionMap = {};
-const failureTriggers = {}; // ✅ 추가
+const missionStatus = {};
+const TOTAL_MISSIONS = 7;
 
-// ❌ 클라이언트 정적 파일 서비스 제거
-//const buildPath = path.join(__dirname, "../client/build");
-//app.use(express.static(buildPath));
-
-//app.get(/.*/, (req, res) => {
-//  res.sendFile(path.join(buildPath, "index.html"));
-//});
+for (let i = 1; i <= TOTAL_MISSIONS; i++) {
+  missionStatus[i] = {
+    reset: false,
+    success: false,
+    failed: false,
+    inProgress: false,
+  };
+}
 
 io.on("connection", (socket) => {
   console.log("✅ 연결됨:", socket.id);
 
-  socket.on("mission-start", (missionId) => {
-    if (!activeMissionMap[socket.id]) activeMissionMap[socket.id] = [];
-    if (!activeMissionMap[socket.id].includes(missionId)) {
-      activeMissionMap[socket.id].push(missionId);
-    }
-    io.emit("admin-mission-activate", missionId);
-  });
-
-  socket.on("check-failure", (missionId) => {
-    const key = `mission_${missionId}_${socket.id}`;
-    const isFailed = !!failedMap[key];
-    socket.emit("failure-status", { missionId, isFailed });
-  });
-
-  socket.on("mark-failed", (missionId) => {
-    const key = `mission_${missionId}_${socket.id}`;
-    failedMap[key] = true;
-    failureTriggers[missionId] = 1; // ✅ 트리거 활성화
-    console.log(`❌ 실패 기록: ${key}`);
-
-    emitGlobalStatus();
-  });
-
-  socket.on("clear-failure-trigger", (missionId) => {
-    failureTriggers[missionId] = 0; // ✅ 트리거 제거
-    console.log(`✅ 트리거 초기화: 미션 ${missionId}`);
-    emitGlobalStatus();
-  });
-
   socket.on("request-global-status", () => {
-    emitGlobalStatus(socket);
+    socket.emit("global-status", missionStatus);
   });
 
   socket.on("admin-reset-mission", (missionId) => {
-    Object.keys(failedMap).forEach((key) => {
-      if (key.startsWith(`mission_${missionId}_`)) delete failedMap[key];
-    });
-    Object.keys(activeMissionMap).forEach((id) => {
-      activeMissionMap[id] = activeMissionMap[id].filter((m) => m !== missionId);
-    });
-    failureTriggers[missionId] = 0; // ✅ 리셋 시 트리거도 제거
-    console.log(`🧼 미션 ${missionId} 초기화`);
-    io.emit("participant-reset", missionId);
+    if (missionStatus[missionId]) {
+      missionStatus[missionId] = {
+        reset: true,
+        success: false,
+        failed: false,
+        inProgress: false,
+      };
+      io.emit("participant-reset", missionId);
+      setTimeout(() => {
+        missionStatus[missionId].reset = false;
+        io.emit("global-status", missionStatus);
+      }, 100);
+    }
   });
 
   socket.on("admin-reset-all", () => {
-    Object.keys(failedMap).forEach((key) => delete failedMap[key]);
-    Object.keys(activeMissionMap).forEach((id) => (activeMissionMap[id] = []));
-    Object.keys(failureTriggers).forEach((id) => (failureTriggers[id] = 0));
-    console.log("🧼 전체 초기화");
+    for (let i = 1; i <= TOTAL_MISSIONS; i++) {
+      missionStatus[i] = {
+        reset: true,
+        success: false,
+        failed: false,
+        inProgress: false,
+      };
+    }
     io.emit("participant-reset", -1);
-    emitGlobalStatus();
+    setTimeout(() => {
+      for (let i = 1; i <= TOTAL_MISSIONS; i++) {
+        missionStatus[i].reset = false;
+      }
+      io.emit("global-status", missionStatus);
+    }, 100);
+  });
+
+  socket.on("mission-start", (missionId) => {
+    for (let i = 1; i <= TOTAL_MISSIONS; i++) {
+      if (i !== missionId && missionStatus[i].inProgress) return;
+    }
+    if (missionStatus[missionId]) {
+      missionStatus[missionId].inProgress = true;
+      io.emit("admin-mission-activate", missionId);
+      io.emit("global-status", missionStatus);
+    }
+  });
+
+  socket.on("mark-failed", (missionId) => {
+    if (missionStatus[missionId]) {
+      missionStatus[missionId].failed = true;
+      missionStatus[missionId].inProgress = false;
+      io.emit("global-status", missionStatus);
+    }
   });
 
   socket.on("mission-complete", (missionId) => {
-    if (!completedMap[socket.id]) completedMap[socket.id] = [];
-    if (!completedMap[socket.id].includes(missionId)) {
-      completedMap[socket.id].push(missionId);
+    if (missionStatus[missionId]) {
+      if (missionStatus[missionId].success) return; // ✅ 중복 성공 방지
+      missionStatus[missionId].success = true;
+      missionStatus[missionId].failed = false;
+      missionStatus[missionId].inProgress = false;
+      io.emit("mission-complete", missionId);
+      io.emit("global-status", missionStatus);
     }
-
-    Object.keys(failedMap).forEach((key) => {
-      if (key.startsWith(`mission_${missionId}_`)) delete failedMap[key];
-    });
-    failureTriggers[missionId] = 0; // ✅ 완료 시 트리거 제거
-
-    console.log(`🏁 미션 ${missionId} 완료`);
-    io.emit("mission-complete", missionId);
-    emitGlobalStatus();
   });
 
   socket.on("disconnect", () => {
-    delete activeMissionMap[socket.id];
     console.log("❎ 연결 종료:", socket.id);
   });
-
-  function emitGlobalStatus(toSocket = null) {
-    const running = Object.entries(activeMissionMap)
-      .flatMap(([sid, ids]) => ids.filter((id) => !completedMap[sid]?.includes(id)));
-
-    const failed = Object.keys(failedMap)
-      .map((k) => Number(k.split("_")[1]))
-      .filter((v, i, a) => a.indexOf(v) === i);
-
-    const completed = Object.values(completedMap).flat();
-
-    const status = {
-      running,
-      failed,
-      completed,
-      failureTriggers,
-    };
-
-    if (toSocket) {
-      toSocket.emit("global-status", status);
-    } else {
-      io.emit("global-status", status);
-    }
-  }
 });
 
 server.listen(4000, () => {
